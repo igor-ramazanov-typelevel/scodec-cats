@@ -41,7 +41,8 @@ import _root_.cats._
 import _root_.cats.implicits._
 
 private[cats] abstract class CatsInstancesLowPriority {
-  implicit final def DecoderSemigroupInstance[A](implicit A: Semigroup[A]): Semigroup[Decoder[A]] =
+  implicit final def DecoderSemigroupInstance[A](
+      implicit A: Semigroup[A]): Semigroup[Decoder[A]] =
     new DecoderSemigroup[A]()
 }
 
@@ -64,7 +65,8 @@ private[cats] abstract class CatsInstances extends CatsInstancesLowPriority {
   implicit val ErrEqInstance: Eq[Err] = Eq.fromUniversalEquals
   implicit val ErrShowInstance: Show[Err] = Show.fromToString
 
-  implicit val AttemptMonadErrorTraverseInstance: MonadError[Attempt, Err] with Traverse[Attempt] =
+  implicit val AttemptMonadErrorTraverseInstance
+      : MonadError[Attempt, Err] with Traverse[Attempt] =
     new MonadError[Attempt, Err] with Traverse[Attempt] {
       def pure[A](a: A) = Attempt.successful(a)
       def flatMap[A, B](fa: Attempt[A])(f: A => Attempt[B]) = fa.flatMap(f)
@@ -75,8 +77,8 @@ private[cats] abstract class CatsInstances extends CatsInstancesLowPriority {
       @tailrec
       override def tailRecM[A, B](a: A)(f: A => Attempt[Either[A, B]]): Attempt[B] =
         f(a) match {
-          case fail @ Attempt.Failure(_)    => fail
-          case Attempt.Successful(Left(a))  => tailRecM(a)(f)
+          case fail @ Attempt.Failure(_) => fail
+          case Attempt.Successful(Left(a)) => tailRecM(a)(f)
           case Attempt.Successful(Right(b)) => Attempt.Successful(b)
         }
 
@@ -89,13 +91,13 @@ private[cats] abstract class CatsInstances extends CatsInstancesLowPriority {
         }
 
       def foldLeft[A, B](fa: Attempt[A], b: B)(f: (B, A) => B): B = fa match {
-        case Attempt.Failure(_)        => b
+        case Attempt.Failure(_) => b
         case Attempt.Successful(value) => f(b, value)
       }
 
       def foldRight[A, B](fa: Attempt[A], lb: Eval[B])(f: (A, Eval[B]) => Eval[B]): Eval[B] =
         fa match {
-          case Attempt.Failure(_)        => lb
+          case Attempt.Failure(_) => lb
           case Attempt.Successful(value) => f(value, lb)
         }
     }
@@ -108,18 +110,18 @@ private[cats] abstract class CatsInstances extends CatsInstancesLowPriority {
       case Attempt.Successful(la) =>
         r match {
           case Attempt.Successful(ra) => Eq[A].eqv(la, ra)
-          case Attempt.Failure(_)     => false
+          case Attempt.Failure(_) => false
         }
       case Attempt.Failure(le) =>
         r match {
           case Attempt.Successful(_) => false
-          case Attempt.Failure(re)   => Eq[Err].eqv(le, re)
+          case Attempt.Failure(re) => Eq[Err].eqv(le, re)
         }
     }
   }
   implicit def AttemptShowInstance[A: Show]: Show[Attempt[A]] = Show.show {
     case Attempt.Successful(a) => show"Successful($a)"
-    case Attempt.Failure(e)    => show"Successful($e)"
+    case Attempt.Failure(e) => show"Successful($e)"
   }
 
   implicit val DecodeResultTraverseComonadInstance
@@ -143,35 +145,38 @@ private[cats] abstract class CatsInstances extends CatsInstancesLowPriority {
     s"DecodeResult(${res.value.show},${res.remainder.show})"
   }
 
-  implicit val DecoderMonadErrorInstance: MonadError[Decoder, Err] = new MonadError[Decoder, Err] {
+  implicit val DecoderMonadErrorInstance: MonadError[Decoder, Err] =
+    new MonadError[Decoder, Err] {
 
-    def pure[A](a: A) = new Decoder[A] {
-      def decode(b: BitVector) = Attempt.successful(DecodeResult(a, b))
-    }
+      def pure[A](a: A) = new Decoder[A] {
+        def decode(b: BitVector) = Attempt.successful(DecodeResult(a, b))
+      }
 
-    def flatMap[A, B](fa: Decoder[A])(f: A => Decoder[B]) = fa.flatMap(f)
+      def flatMap[A, B](fa: Decoder[A])(f: A => Decoder[B]) = fa.flatMap(f)
 
-    override def tailRecM[A, B](a: A)(f: A => Decoder[Either[A, B]]): Decoder[B] = new Decoder[B] {
-      override def decode(bits: BitVector): Attempt[DecodeResult[B]] =
-        f(a).decode(bits).flatMap { (dr: DecodeResult[Either[A, B]]) =>
-          AttemptMonadErrorInstance.tailRecM(dr) { (dr: DecodeResult[Either[A, B]]) =>
-            dr.value match {
-              case Left(a)  => f(a).decode(dr.remainder).map(Left(_))
-              case Right(b) => Attempt.successful(Right(DecodeResult(b, dr.remainder)))
+      override def tailRecM[A, B](a: A)(f: A => Decoder[Either[A, B]]): Decoder[B] =
+        new Decoder[B] {
+          override def decode(bits: BitVector): Attempt[DecodeResult[B]] =
+            f(a).decode(bits).flatMap { (dr: DecodeResult[Either[A, B]]) =>
+              AttemptMonadErrorInstance.tailRecM(dr) { (dr: DecodeResult[Either[A, B]]) =>
+                dr.value match {
+                  case Left(a) => f(a).decode(dr.remainder).map(Left(_))
+                  case Right(b) => Attempt.successful(Right(DecodeResult(b, dr.remainder)))
+                }
+              }
             }
-          }
+        }
+
+      def raiseError[A](e: Err): Decoder[A] = new Decoder[A] {
+        def decode(bits: BitVector): Attempt[DecodeResult[A]] = Attempt.failure(e)
+      }
+
+      def handleErrorWith[A](fa: Decoder[A])(f: Err => Decoder[A]): Decoder[A] =
+        new Decoder[A] {
+          def decode(bits: BitVector): Attempt[DecodeResult[A]] =
+            fa.decode(bits).fold(f(_).decode(bits), Attempt.Successful(_))
         }
     }
-
-    def raiseError[A](e: Err): Decoder[A] = new Decoder[A] {
-      def decode(bits: BitVector): Attempt[DecodeResult[A]] = Attempt.failure(e)
-    }
-
-    def handleErrorWith[A](fa: Decoder[A])(f: Err => Decoder[A]): Decoder[A] = new Decoder[A] {
-      def decode(bits: BitVector): Attempt[DecodeResult[A]] =
-        fa.decode(bits).fold(f(_).decode(bits), Attempt.Successful(_))
-    }
-  }
 
   private[cats] val DecoderMonadInstance: Monad[Decoder] = DecoderMonadErrorInstance
 
@@ -181,9 +186,10 @@ private[cats] abstract class CatsInstances extends CatsInstancesLowPriority {
     }
   implicit def DecoderShowInstance[A]: Show[Decoder[A]] = Show.fromToString
 
-  implicit val EncoderContravariantInstance: Contravariant[Encoder] = new Contravariant[Encoder] {
-    def contramap[A, B](fa: Encoder[A])(f: B => A): Encoder[B] = fa.contramap(f)
-  }
+  implicit val EncoderContravariantInstance: Contravariant[Encoder] =
+    new Contravariant[Encoder] {
+      def contramap[A, B](fa: Encoder[A])(f: B => A): Encoder[B] = fa.contramap(f)
+    }
   implicit def EncoderShowInstance[A]: Show[Encoder[A]] = Show.fromToString
 
   implicit val CodecInvariantInstance: Invariant[Codec] = new Invariant[Codec] {
